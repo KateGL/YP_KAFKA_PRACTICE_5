@@ -1,0 +1,214 @@
+services:
+  kafka-1:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka-1
+    hostname: kafka-1
+    ports:
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper-1:2181
+      # Слушатели: имя=протокол://хост:порт
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_HOST://0.0.0.0:29092
+      # Маппинг протоколов на имена слушателей
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      # Слушатель для межброкерного общения
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      # Адреса, которые Kafka отдаёт клиентам
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-1:9092,PLAINTEXT_HOST://host.docker.internal:29092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+    volumes:
+      - kafka_1_data:/var/lib/kafka/data
+    depends_on:
+      zookeeper-1:
+        condition: service_healthy
+    networks:
+      - kafka-net
+
+  kafka-2:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka-2
+    hostname: kafka-2
+    ports:
+      - "29093:29093"
+    environment:
+      KAFKA_BROKER_ID: 2
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper-1:2181
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_HOST://0.0.0.0:29093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-2:9092,PLAINTEXT_HOST://host.docker.internal:29093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+    volumes:
+      - kafka_2_data:/var/lib/kafka/data
+    depends_on:
+      zookeeper-1:
+        condition: service_healthy
+    networks:
+      - kafka-net
+
+  kafka-3:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka-3
+    hostname: kafka-3
+    ports:
+      - "29094:29094"
+    environment:
+      KAFKA_BROKER_ID: 3
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper-1:2181
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_HOST://0.0.0.0:29094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-3:9092,PLAINTEXT_HOST://host.docker.internal:29094
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+    volumes:
+      - kafka_3_data:/var/lib/kafka/data
+    depends_on:
+      zookeeper-1:
+        condition: service_healthy
+    networks:
+      - kafka-net
+
+  zookeeper-1:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper-1
+    hostname: zookeeper-1
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_SERVER_ID: 1
+      ZOOKEEPER_4LW_COMMANDS_WHITELIST: "ruok,srvr,mntr,stat"
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+    # Готовность проверяем командой ruok — брокеры стартуют только после imok
+    healthcheck:
+      test: [ "CMD-SHELL", "echo srvr | nc -w 2 localhost 2181 | grep 'Zookeeper version'" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+    networks:
+      - kafka-net
+
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.5.0
+    container_name: schema-registry
+    hostname: schema-registry
+    ports:
+      - "127.0.0.1:8081:8081"
+    depends_on:
+      - kafka-1
+      - kafka-2
+      - kafka-3
+    environment:
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://kafka-1:9092,kafka-2:9092,kafka-3:9092
+    networks:
+      - kafka-net
+
+  postgres:
+    image: debezium/postgres:16
+    container_name: postgres
+    hostname: postgres
+    ports:
+      - "15432:5432"
+    # Настройки для логической репликации (нужно для Debezium)
+    command:
+      - "postgres"
+      - "-c"
+      - "wal_level=logical"
+      - "-c"
+      - "max_replication_slots=10"
+      - "-c"
+      - "max_wal_senders=10"
+    environment:
+      POSTGRES_USER: postgres-user
+      POSTGRES_PASSWORD: postgres-pw
+      POSTGRES_DB: customers
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - kafka-net
+
+  kafka-connect:
+    build:
+      context: ./kafka-connect
+    container_name: kafka-connect
+    hostname: kafka-connect
+    ports:
+      - "8083:8083"   # REST API Kafka Connect
+    depends_on:
+      - kafka-1
+      - kafka-2
+      - kafka-3
+      - schema-registry
+      - postgres
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: kafka-1:9092
+      CONNECT_REST_PORT: 8083
+      CONNECT_GROUP_ID: 'kafka-connect'
+      # Рекламируем себя по имени сервиса — иначе kafka-ui и другие
+      # контейнеры не найдут REST API
+      CONNECT_REST_ADVERTISED_HOST_NAME: 'kafka-connect'
+
+      # Хранение конфигурации, смещений и статусов
+      CONNECT_CONFIG_STORAGE_TOPIC: 'connect-config-storage'
+      CONNECT_OFFSET_STORAGE_TOPIC: 'connect-offset-storage'
+      CONNECT_STATUS_STORAGE_TOPIC: 'connect-status-storage'
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+
+      # Конвертеры
+      CONNECT_KEY_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
+      CONNECT_VALUE_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
+      # Параметр пригодится, когда перейдёшь на AvroConverter
+      CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: 'http://schema-registry:8081'
+
+      # Пути к плагинам
+      CONNECT_PLUGIN_PATH: /usr/share/java,/etc/kafka-connect/jars
+    volumes:
+      - ./confluent-hub-components/:/etc/kafka-connect/jars
+    networks:
+      - kafka-net
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:v0.7.0
+    container_name: kafka-ui
+    hostname: kafka-ui
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAP_SERVERS: kafka-1:9092,kafka-2:9092,kafka-3:9092
+      KAFKA_CLUSTERS_0_SCHEMAREGISTRY: http://schema-registry:8081
+      KAFKA_CLUSTERS_0_KAFKACONNECT_0_NAME: kafka-connect
+      KAFKA_CLUSTERS_0_KAFKACONNECT_0_ADDRESS: http://kafka-connect:8083
+      DYNAMIC_CONFIG_ENABLED: "true"
+    depends_on:
+      - kafka-1
+      - kafka-2
+      - kafka-3
+      - schema-registry
+      - kafka-connect
+    networks:
+      - kafka-net
+
+volumes:
+  kafka_1_data:
+  kafka_2_data:
+  kafka_3_data:
+  zookeeper_data:
+  postgres_data:
+
+networks:
+  kafka-net:
+    driver: bridge
