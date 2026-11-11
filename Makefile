@@ -1,141 +1,102 @@
-.PHONY: up up-infra down reset status create-topic describe-topic list-topics delete-topic restart-ui init-topics check-topics
+# ================== Переменные ==================
+COMPOSE = docker compose
+# Сервисы инфраструктуры без kafka-connect (его надо собирать отдельно)
+INFRA   = zookeeper-1 kafka-1 kafka-2 kafka-3 schema-registry postgres
 
-# Явно указываем имя файла — так точно не будет ошибок с пустым именем
-COMPOSE_FILE := docker-compose.yaml
+.PHONY: help up down restart build rebuild logs ps status health clean topics connect-check ui-shell
 
-CONTAINER_PREFIX := kafka-
-BOOTSTRAP_SERVERS := kafka-1:9092,kafka-2:9092,kafka-3:9092
+# ================== Справка ==================
+help: ## Показать список команд
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
-PARTITIONS ?= 3
-REPLICATION_FACTOR ?= 2
+# ================== Запуск и остановка ==================
+up: ## Запустить весь стек (сборка kafka-connect, ожидание готовности Zookeeper)
+	$(COMPOSE) up -d --build
+	@echo "Стек запускается. Проверить готовность: make health"
 
-# Получаем ID контейнера kafka-1
-KAFKA_CONTAINER := $(shell docker compose -f $(COMPOSE_FILE) ps -q kafka-1 2>/dev/null)
+down: ## Остановить стек (данные в томах сохраняются)
+	$(COMPOSE) down
 
-check-cluster:
-	@if [ -z "$(KAFKA_CONTAINER)" ]; then \
-		echo "❌ Ошибка: Кластер Kafka не найден или не запущен."; \
-		echo "   Запустите: make up-infra или make up"; \
-		exit 1; \
-	fi
+restart: ## Перезапустить стек
+	$(COMPOSE) down
+	$(COMPOSE) up -d --build
 
-up:
-	@echo "🚀 Запуск всего (Kafka + UI + продюсер + консьюмеры)..."
-	docker compose -f $(COMPOSE_FILE) up --build -d
+clean: ## Полный сброс: остановить и удалить данные (тома!)
+	$(COMPOSE) down -v
+	@echo "Внимание: все топики, схемы и данные Postgres удалены."
 
-up-infra:
-	@echo "🚀 Запуск инфраструктуры "
-	# Теперь kafka-ui стартует вместе с брокерами
-	docker compose -f $(COMPOSE_FILE) up --build -d kafka-1 kafka-2 kafka-3 zookeeper-1 kafka-ui schema-registry postgres
+rebuild: ## Пересобрать образ kafka-connect и перезапустить его
+	$(COMPOSE) up -d --build --force-recreate kafka-connect
 
-down:
-	@echo "🛑 Остановка всего кластера и приложений..."
-	docker compose -f $(COMPOSE_FILE) down
+# ================== Наблюдение ==================
+logs: ## Логи всех сервисов (поток)
+	$(COMPOSE) logs -f --tail=100
 
-reset:
-	@echo "💥 Полный сброс (контейнеры, volumes, orphan-сервисы)..."
-	docker compose -f $(COMPOSE_FILE) down -v --remove-orphans || true
-	@echo "🧹 Попытка удалить сеть проекта, если осталась..."
-	docker network rm yp_kafka_practice_1_kafka-net 2>/dev/null || true
-	@echo "✅ Сброс завершён."
+logs-kafka: ## Логи брокеров Kafka
+	$(COMPOSE) logs -f --tail=100 kafka-1 kafka-2 kafka-3
 
+logs-connect: ## Логи Kafka Connect
+	$(COMPOSE) logs -f --tail=100 kafka-connect
 
+ps: ## Статус контейнеров
+	$(COMPOSE) ps
 
-restart-ui:
-	@echo "🔄 Перезапуск Kafka UI..."
-	docker compose -f $(COMPOSE_FILE) restart kafka-ui
-
-status-ui:
-	@echo "👁 Статус Kafka UI:"
-	docker ps --filter "name=kafka-ui" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
-
-status:
-	@echo "📊 Статус контейнеров Kafka:"
-	docker ps --filter "name=$(CONTAINER_PREFIX)" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+status: ## Статус + краткая сводка
+	$(COMPOSE) ps
 	@echo ""
-	@echo "🌐 Bootstrap Servers: $(BOOTSTRAP_SERVERS)"
-	@echo "   Default Partitions: $(PARTITIONS)"
-	@echo "   Default Replication Factor: $(REPLICATION_FACTOR)"
-	@if [ -n "$(KAFKA_CONTAINER)" ]; then echo "✅ Кластер активен."; else echo "⚠️ Кластер не активен."; fi
+	@echo "Порты на хосте:"
+	@echo "  Kafka (host listeners): 29092 / 29093 / 29094"
+	@echo "  Schema Registry:        127.0.0.1:8081"
+	@echo "  Kafka Connect REST:     8083"
+	@echo "  Kafka UI:               8080"
+	@echo "  Postgres:               15432"
 
-create-topic: check-cluster
-	@if [ -z "$(TOPIC)" ]; then \
-		echo "❌ Ошибка: не задано имя топика. Используйте: make create-topic TOPIC=my-topic"; \
-		exit 1; \
-	fi
-	@echo "✨ Создание топика '$(TOPIC)'..."
-	@docker exec "$(KAFKA_CONTAINER)" kafka-topics \
-		--bootstrap-server "$(BOOTSTRAP_SERVERS)" \
-		--create \
-		--topic "$(TOPIC)" \
-		--partitions "$(PARTITIONS)" \
-		--replication-factor "$(REPLICATION_FACTOR)" \
-		--config min.insync.replicas="$(REPLICATION_FACTOR)" \
-		--if-not-exists
+# ================== Проверки готовности ==================
+health: ## Проверить готовность ключевых сервисов
+	@echo "--- Zookeeper ---"
+	@docker exec zookeeper-1 bash -c 'echo srvr | nc -w 2 localhost 2181 | grep "Zookeeper version"' || echo "ZK не готов"
+	@echo "--- Kafka (bootstrap kafka-1) ---"
+	@docker exec kafka-1 kafka-topics --bootstrap-server localhost:9092 --list >/dev/null 2>&1 && echo "OK" || echo "Брокер не готов"
+	@echo "--- Schema Registry ---"
+	@curl -s -o /dev/null -w "HTTP %{http_code}\n" http://localhost:8081/subjects || echo "SR не готов"
+	@echo "--- Kafka Connect ---"
+	@curl -s http://localhost:8083/connectors || echo "Connect не готов"
 
-describe-topic: check-cluster
-	@if [ -z "$(TOPIC)" ]; then \
-		echo "❌ Ошибка: не задано имя топика."; \
-		exit 1; \
-	fi
-	@echo "👁️ Описание топика '$(TOPIC)'..."
-	@docker exec "$(KAFKA_CONTAINER)" kafka-topics \
-		--bootstrap-server "$(BOOTSTRAP_SERVERS)" \
-		--describe \
-		--topic "$(TOPIC)"
+connect-check: ## Список коннекторов и статусы плагинов
+	@echo "--- Плагины Connect ---"
+	@curl -s http://localhost:8083/connector-plugins
+	@echo ""
+	@echo "--- Коннекторы ---"
+	@curl -s http://localhost:8083/connectors
 
-list-topics: check-cluster
-	@echo "📋 Список топиков:"
-	@docker exec "$(KAFKA_CONTAINER)" kafka-topics \
-		--bootstrap-server "$(BOOTSTRAP_SERVERS)" \
-		--list
+# ================== Работа с Kafka ==================
+topics: ## Список топиков
+	@docker exec kafka-1 kafka-topics --bootstrap-server localhost:9092 --list
 
-delete-topic: check-cluster
-	@if [ -z "$(TOPIC)" ]; then \
-		echo "❌ Ошибка: не задано имя топика."; \
-		exit 1; \
-	fi
-	@echo "⚠️ Внимание: удаление топика может не сработать, если delete.topic.enable=false в конфиге Kafka."
-	@echo "   Удаление топика '$(TOPIC)'..."
-	@docker exec "$(KAFKA_CONTAINER)" kafka-topics \
-		--bootstrap-server "$(BOOTSTRAP_SERVERS)" \
-		--delete \
-		--topic "$(TOPIC)"
+create-topic: ## Создать топик: make create-topic TOPIC=my-topic PARTITIONS=3
+	@docker exec kafka-1 kafka-topics \
+		--bootstrap-server localhost:9092 \
+		--create --if-not-exists \
+		--topic $(TOPIC) \
+		--partitions $(PARTITIONS) \
+		--replication-factor 1
+	@echo "Топик $(TOPIC) создан/уже существует."
 
-# Список всех топиков, нужных для приложения
-TOPICS_REQUIRED := registered_users messages blocked_users blocked_words filtered_messages
+# ================== Оболочки ==================
+kafka-shell: ## Войти в контейнер kafka-1
+	docker exec -it kafka-1 bash
 
-# Цель: создать все необходимые топики сразу
-init-topics: check-cluster
-	@echo "✨ Инициализация всех необходимых топиков..."
-	@for topic in $(TOPICS_REQUIRED); do \
-		echo "  → Создание топика: $$topic"; \
-		docker exec "$(KAFKA_CONTAINER)" kafka-topics \
-			--bootstrap-server "$(BOOTSTRAP_SERVERS)" \
-			--create \
-			--topic "$$topic" \
-			--partitions "$(PARTITIONS)" \
-			--replication-factor "$(REPLICATION_FACTOR)" \
-			--config min.insync.replicas="$(REPLICATION_FACTOR)" \
-			--if-not-exists; \
-	done
-	@echo "✅ Все топики инициализированы."
+pg-shell: ## Войти в psql (postgres)
+	docker exec -it postgres psql -U postgres-user -d customers
 
-# цель для проверки, все ли топики на месте
-check-topics: check-cluster
-	@echo "🔍 Проверка наличия всех требуемых топиков..."
-	@missing=0; \
-	for topic in $(TOPICS_REQUIRED); do \
-		echo "   📋 Проверяю: $$topic"; \
-		if ! docker exec "$(KAFKA_CONTAINER)" kafka-topics \
-			--bootstrap-server "$(BOOTSTRAP_SERVERS)" \
-			--list \
-			| grep -Fxq "$$topic"; then \
-			echo "   ❌ Отсутствует: $$topic"; \
-			missing=1; \
-		else \
-			echo "   ✅ Есть: $$topic"; \
-		fi; \
-	done; \
-	if [ "$$missing" -eq 1 ]; then exit 1; fi; \
-	echo "✅ Все топики найдены."
+ui-shell: ## Войти в контейнер kafka-connect (для отладки коннекторов)
+	docker exec -it kafka-connect bash
+
+# ================== База данных ==================
+init-db: ## Создать БД db_yp5 и таблицы users/orders
+	@echo "Создание БД и таблиц..."
+	@docker exec -i postgres psql -U postgres-user -d customers \
+		-v ON_ERROR_STOP=0 \
+		< ./db/init.sql
+	@echo "Готово. Проверка таблиц:"
+	@docker exec -i postgres psql -U postgres-user -d db_yp5 -c "\dt"
