@@ -3,7 +3,7 @@ COMPOSE = docker compose
 # Сервисы инфраструктуры без kafka-connect (его надо собирать отдельно)
 INFRA   = zookeeper-1 kafka-1 kafka-2 kafka-3 schema-registry postgres
 
-.PHONY: help up down restart build rebuild logs ps status health clean topics connect-check ui-shell
+.PHONY: help up down restart build rebuild logs ps status health clean topics connect-check ui-shell init-db seed-db connector-create connector-status connector-delete delete-order delete-user update-user
 
 # ================== Справка ==================
 help: ## Показать список команд
@@ -100,3 +100,29 @@ init-db: ## Создать БД db_yp5 и таблицы users/orders
 		< ./db/init.sql
 	@echo "Готово. Проверка таблиц:"
 	@docker exec -i postgres psql -U postgres-user -d db_yp5 -c "\dt"
+
+seed-db: ## Наполнить базу тестовыми данными: make seed-db [USERS=10] [ORDERS=3]
+	./db/seed_db.sh db_yp5 ${USERS} ${ORDERS}
+
+delete-order: ## Удалить заказ по ID: make delete-order ID=5
+	./db/user_ops.sh delete-order $(ID)
+
+delete-user: ## Удалить пользователя по ID: make delete-user ID=3
+	./db/user_ops.sh delete-user $(ID)
+
+update-user: ## Изменить пользователя: make update-user ID=3 NAME="Мария Сергеевна" [EMAIL=...]
+	@if [ -z "$(ID)" ]; then echo "Использование: make update-user ID=<номер> [NAME=...] [EMAIL=...]"; exit 1; fi
+	NAME='$(NAME)' EMAIL='$(EMAIL)' ./db/user_ops.sh update-user $(ID)
+
+
+# ====== Connectors =====
+connector-create: ## Создать Debezium-коннектор из kafka-connect/connectors/postgres-source.json
+	curl -s -X POST http://localhost:8083/connectors \
+		-H "Content-Type: application/json" \
+		-d @kafka-connect/connectors/postgres-source.json | python3 -m json.tool
+
+connector-status: ## Статус коннектора postgres-source-yp5
+	curl -s http://localhost:8083/connectors/postgres-source-yp5/status | python3 -m json.tool
+
+connector-delete: ## Удалить коннектор postgres-source-yp5
+	curl -s -X DELETE http://localhost:8083/connectors/postgres-source-yp5

@@ -1,0 +1,23 @@
+{
+  "name": "postgres-source-yp5",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "database.hostname": "postgres",
+    "database.port": "5432",
+    "database.user": "postgres-user",
+    "database.password": "postgres-pw",
+    "database.dbname": "db_yp5",
+    "plugin.name": "pgoutput",
+    "topic.prefix": "yp5",
+    "table.include.list": "public.users,public.orders",
+    "slot.name": "yp5_cdc_slot",
+    "publication.name": "yp5_cdc_pub",
+    "publication.autocreate.mode": "filtered",
+    "snapshot.mode": "initial",
+    "key.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "value.converter.schemas.enable": "true",
+    "tombstones.on.delete": "true",
+    "heartbeat.interval.ms": "10000"
+  }
+}
