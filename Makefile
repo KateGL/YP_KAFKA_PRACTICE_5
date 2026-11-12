@@ -3,7 +3,7 @@ COMPOSE = docker compose
 # Сервисы инфраструктуры без kafka-connect (его надо собирать отдельно)
 INFRA   = zookeeper-1 kafka-1 kafka-2 kafka-3 schema-registry postgres
 
-.PHONY: help up down restart build rebuild logs ps status health clean topics connect-check ui-shell init-db seed-db connector-create connector-status connector-delete delete-order delete-user update-user
+.PHONY: help up down restart build rebuild logs ps status health clean topics connect-check ui-shell init-db seed-db connector-create connector-status connector-delete delete-order delete-user update-user run-consumer clean-consumer-venv
 
 # ================== Справка ==================
 help: ## Показать список команд
@@ -126,3 +126,24 @@ connector-status: ## Статус коннектора postgres-source-yp5
 
 connector-delete: ## Удалить коннектор postgres-source-yp5
 	curl -s -X DELETE http://localhost:8083/connectors/postgres-source-yp5
+
+# ================== Консьюмер ==================
+VENV_DIR := .venv
+PYTHON   := $(VENV_DIR)/bin/python
+PIP      := $(VENV_DIR)/bin/pip
+
+$(VENV_DIR): consumer/requirements.txt ## Создать venv и установить зависимости (выполняется автоматически)
+	@echo "Создаю виртуальное окружение и ставлю зависимости..."
+	python3 -m venv $(VENV_DIR)
+	$(PIP) install --quiet --upgrade pip
+	$(PIP) install --quiet -r consumer/requirements.txt
+	@touch $(VENV_DIR)
+
+run-consumer: $(VENV_DIR) ## Запустить консьюмер CDC (venv создаётся и удаляется автоматически)
+	$(PYTHON) consumer/cdc_consumer.py; \
+	status=$$?; \
+	rm -rf $(VENV_DIR); \
+	exit $$status
+
+clean-consumer-venv: ## Удалить виртуальное окружение вручную (на случай сбоя)
+	rm -rf $(VENV_DIR)

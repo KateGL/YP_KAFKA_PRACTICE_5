@@ -14,11 +14,14 @@ services:
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       # Слушатель для межброкерного общения
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-      # Адреса, которые Kafka отдаёт клиентам
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-1:9092,PLAINTEXT_HOST://host.docker.internal:29092
+      # Адреса, которые Kafka отдаёт клиентам:
+      # внутренний — по имени сервиса, для хоста — localhost
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-1:9092,PLAINTEXT_HOST://localhost:29092
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - kafka_1_data:/var/lib/kafka/data
     depends_on:
@@ -39,10 +42,12 @@ services:
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_HOST://0.0.0.0:29093
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-2:9092,PLAINTEXT_HOST://host.docker.internal:29093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-2:9092,PLAINTEXT_HOST://localhost:29093
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - kafka_2_data:/var/lib/kafka/data
     depends_on:
@@ -63,10 +68,12 @@ services:
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_HOST://0.0.0.0:29094
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-3:9092,PLAINTEXT_HOST://host.docker.internal:29094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-3:9092,PLAINTEXT_HOST://localhost:29094
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - kafka_3_data:/var/lib/kafka/data
     depends_on:
@@ -86,14 +93,13 @@ services:
       ZOOKEEPER_4LW_COMMANDS_WHITELIST: "ruok,srvr,mntr,stat"
     volumes:
       - zookeeper_data:/var/lib/zookeeper/data
-    # Готовность проверяем командой ruok — брокеры стартуют только после imok
+    # Готовность проверяем командой srvr — брокеры стартуют только после ответа ZK
     healthcheck:
       test: [ "CMD-SHELL", "echo srvr | nc -w 2 localhost 2181 | grep 'Zookeeper version'" ]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 15s
-
     networks:
       - kafka-net
 
