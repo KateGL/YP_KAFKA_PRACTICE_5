@@ -151,6 +151,7 @@ services:
     hostname: kafka-connect
     ports:
       - "8083:8083"   # REST API Kafka Connect
+      - "9404:9404"   # метрики JMX exporter (Prometheus)
     depends_on:
       - kafka-1
       - kafka-2
@@ -181,10 +182,25 @@ services:
 
       # Пути к плагинам
       CONNECT_PLUGIN_PATH: /usr/share/java,/etc/kafka-connect/jars
+      # JMX: без KAFKA_JMX_PORT агент увидит пустое JMX-дерево
+      KAFKA_JMX_PORT: 9011
+      KAFKA_JMX_HOSTNAME: kafka-connect
+      KAFKA_OPTS: "-javaagent:/opt/jmx_exporter/jmx_prometheus_javaagent.jar=9404:/opt/jmx_exporter/connect.yml"
+
+    # Работоспособность Connect проверяем через его собственный REST API.
+    # healthcheck стоит на уровне сервиса, а не внутри environment!
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -sf http://localhost:8083/connectors > /dev/null || exit 1" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     volumes:
       - ./confluent-hub-components/:/etc/kafka-connect/jars
+      - ./kafka-connect/jmx/connect.yml:/opt/jmx_exporter/connect.yml:ro
     networks:
       - kafka-net
+
 
   kafka-ui:
     image: provectuslabs/kafka-ui:v0.7.0
@@ -208,12 +224,80 @@ services:
     networks:
       - kafka-net
 
+# ---------- Мониторинг ----------
+
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: prometheus
+    hostname: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - kafka-net
+
+  grafana:
+    image: grafana/grafana:10.4.1
+    container_name: grafana
+    hostname: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+    networks:
+      - kafka-net
+
+  # Метрики брокеров и топиков (лаги консьюмер-групп и т.п.)
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:v1.7.0
+    container_name: kafka-exporter
+    hostname: kafka-exporter
+    ports:
+      - "9308:9308"
+    command:
+      - "--kafka.server=kafka-1:9092"
+      - "--kafka.server=kafka-2:9092"
+      - "--kafka.server=kafka-3:9092"
+    depends_on:
+      - kafka-1
+      - kafka-2
+      - kafka-3
+    networks:
+      - kafka-net
+
+  # Метрики Postgres: соединения, транзакции, кэш
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    container_name: postgres-exporter
+    hostname: postgres-exporter
+    ports:
+      - "9187:9187"
+    environment:
+      DATA_SOURCE_NAME: "postgresql://postgres-user:postgres-pw@postgres:5432/db_yp5?sslmode=disable"
+    depends_on:
+      - postgres
+    networks:
+      - kafka-net
+
+
 volumes:
   kafka_1_data:
   kafka_2_data:
   kafka_3_data:
   zookeeper_data:
   postgres_data:
+  prometheus_data:
+  grafana_data:
 
 networks:
   kafka-net:

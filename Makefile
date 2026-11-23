@@ -147,3 +147,30 @@ run-consumer: $(VENV_DIR) ## Запустить консьюмер CDC (venv с�
 
 clean-consumer-venv: ## Удалить виртуальное окружение вручную (на случай сбоя)
 	rm -rf $(VENV_DIR)
+
+
+# ---------- Мониторинг ----------
+
+METRICS_SERVICES := prometheus grafana kafka-exporter postgres-exporter
+
+metrics-up: ## Запустить мониторинг (Prometheus, Grafana, экспортеры)
+	docker compose up -d $(METRICS_SERVICES)
+	@echo "Grafana:     http://localhost:3000 (admin/admin)"
+	@echo "Prometheus:  http://localhost:9090/targets"
+
+metrics-down: ## Остановить мониторинг
+	docker compose stop $(METRICS_SERVICES)
+
+metrics-logs: ## Логи мониторинга
+	docker compose logs -f $(METRICS_SERVICES)
+
+metrics-restart: ## Перезапустить мониторинг
+	docker compose restart $(METRICS_SERVICES)
+
+metrics-connect: ## Запустить только метрики Kafka Connect (JMX: 9404)
+	docker compose build kafka-connect
+	docker compose up -d --force-recreate kafka-connect
+	@echo "Метрики Connect: http://localhost:9404/metrics"
+
+metrics-check: ## Проверить таргеты Prometheus
+	curl -s http://localhost:9090/api/v1/targets | python3 -m json.tool | grep -A1 '"health"'

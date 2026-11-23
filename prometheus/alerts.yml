@@ -1,0 +1,37 @@
+# prometheus/alerts.yml
+groups:
+  - name: kafka-connect-health
+    rules:
+      - alert: ConnectorTaskDown
+        expr: kafka_connect_worker_task_count < 1
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "У коннектора нет активных задач"
+
+      - alert: ConnectorDead
+        expr: up{job="kafka-connect"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Kafka Connect недоступен"
+
+      - alert: DebeziumStalled
+        # молчание считаем только если коннектор жив, но событий нет
+        expr: debezium_streaming_milliseconds_since_last_event > 60000
+          and on(connector, task) kafka_connect_worker_task_count >= 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Debezium не отдаёт событий более минуты"
+
+      - alert: ConsumerLagGrowing
+        expr: kafka_consumergroup_lag{consumergroup=~"cdc-.*"} > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Лаг консьюмер-группы {{$labels.consumergroup}} > 100"

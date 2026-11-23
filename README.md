@@ -22,3 +22,5 @@ make update-user ID=3 NAME="Мария Сергеевна"
 make update-user ID=3 EMAIL=maria@example.com
 make update-user ID=3 NAME="Мария С." EMAIL=maria@example.com   # оба поля сразу
 
+Мониторинг:
+http://localhost:3000 
