@@ -1,8 +1,26 @@
-apiVersion: 1
-datasources:
-  - name: Prometheus
-    type: prometheus
-    access: proxy
-    url: http://prometheus:9090
-    isDefault: true
-    editable: false
+global:
+  scrape_interval: 15s
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  # Метрики Kafka Connect (JMX Exporter)
+  - job_name: 'kafka-connect'
+    static_configs:
+      - targets: ['kafka-connect:9404']
+
+  # Метрики брокеров и топиков: лаги консьюмер-групп, партиции и т.п.
+  - job_name: 'kafka-exporter'
+    static_configs:
+      - targets: ['kafka-exporter:9308']
+
+  # Метрики Postgres: соединения, транзакции, кэш
+  - job_name: 'postgres-exporter'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+
+  # Сам Prometheus
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

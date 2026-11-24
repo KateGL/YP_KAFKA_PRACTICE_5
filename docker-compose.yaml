@@ -138,7 +138,7 @@ services:
     environment:
       POSTGRES_USER: postgres-user
       POSTGRES_PASSWORD: postgres-pw
-      POSTGRES_DB: customers
+      POSTGRES_DB: db_yp5
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:

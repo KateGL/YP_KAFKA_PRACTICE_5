@@ -87,7 +87,7 @@ kafka-shell: ## Войти в контейнер kafka-1
 	docker exec -it kafka-1 bash
 
 pg-shell: ## Войти в psql (postgres)
-	docker exec -it postgres psql -U postgres-user -d customers
+	docker exec -it postgres psql -U postgres-user -d db_yp5
 
 ui-shell: ## Войти в контейнер kafka-connect (для отладки коннекторов)
 	docker exec -it kafka-connect bash
@@ -95,7 +95,7 @@ ui-shell: ## Войти в контейнер kafka-connect (для отладк
 # ================== База данных ==================
 init-db: ## Создать БД db_yp5 и таблицы users/orders
 	@echo "Создание БД и таблиц..."
-	@docker exec -i postgres psql -U postgres-user -d customers \
+	@docker exec -i postgres psql -U postgres-user -d db_yp5 \
 		-v ON_ERROR_STOP=0 \
 		< ./db/init.sql
 	@echo "Готово. Проверка таблиц:"
